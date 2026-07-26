@@ -37,7 +37,7 @@ LOCAL_ROOT = Path(__file__).parent
 # T4 is plenty for N-CARS (120x100 crops) and the cheapest option that is
 # still ~20x a laptop. Switch to "A10G" or "L4" for Rung 3 resolutions.
 GPU = "T4"
-TIMEOUT_S = 60 * 60  # generous; runs are minutes, this only guards hangs
+TIMEOUT_S = 60 * 60 * 3  # a full 30-epoch N-CARS run is ~1h on a T4
 
 # CUDA wheels must come from PyTorch's index -- the default PyPI torch is
 # CPU-only on some platforms, and a silently-CPU run wastes the whole budget.
@@ -92,6 +92,53 @@ def _run_training(args: list[str]) -> dict:
 
 
 @app.function(volumes=VOLUMES, timeout=TIMEOUT_S)
+def extract_dataset(archive: str = "/data/download.zip") -> str:
+    """Unpack the Prophesee archive inside the volume.
+
+    Uploading the 285 MB archive and extracting here is far faster than pushing
+    24,029 individual .dat files over the wire -- per-file overhead dominates
+    at that count.
+
+    Handles the shipped nesting: download.zip -> "NCARS ... Dataset/" ->
+    Prophesee_Dataset_n_cars.7z -> the actual split directories.
+    """
+    import zipfile
+
+    import py7zr
+
+    src = Path(archive)
+    if not src.exists():
+        return f"{src} not found. Upload it first with `modal volume put`."
+
+    work = Path("/data/_unpack")
+    work.mkdir(parents=True, exist_ok=True)
+
+    if src.suffix == ".zip":
+        print(f"unzipping {src}...", flush=True)
+        with zipfile.ZipFile(src) as z:
+            z.extractall(work)
+        sevenz = next(work.rglob("*.7z"), None)
+    else:
+        sevenz = src
+
+    if sevenz is None:
+        return f"no .7z found inside {src}"
+
+    print(f"extracting {sevenz.name} (24k files, takes a minute)...", flush=True)
+    with py7zr.SevenZipFile(sevenz, "r") as z:
+        z.extractall("/data/ncars/")
+
+    # Drop the intermediate copy so the volume holds only the dataset.
+    import shutil
+
+    shutil.rmtree(work, ignore_errors=True)
+    data_volume.commit()
+
+    n = len(list(Path("/data/ncars").rglob("*.dat")))
+    return f"extracted {n} .dat files (expected 24029)"
+
+
+@app.function(volumes=VOLUMES, timeout=TIMEOUT_S)
 def upload_dataset() -> str:
     """One-time: verify the dataset landed in the volume.
 
@@ -124,7 +171,7 @@ def train(
     sparsity_lambda: float = 0.0,
     num_steps: int = 10,
     skip_cnn: bool = False,
-    subset: int | None = None,
+    subset: int = 0,          # 0 = use the full dataset
     tag: str = "ncars",
 ) -> dict:
     """One CNN+SNN comparison run."""
@@ -141,7 +188,9 @@ def train(
     ]
     if skip_cnn:
         args.append("--skip-cnn")
-    if subset:
+    if subset > 0:
+        # Note: a plain int rather than Optional[int] -- Modal builds its CLI
+        # from type hints and cannot parse PEP 604 unions on Python 3.9.
         args += ["--subset", str(subset)]
 
     summary = _run_training(args)
