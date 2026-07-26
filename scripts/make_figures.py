@@ -257,46 +257,54 @@ def fig_firing_rate(mode: str) -> None:
 # sweep, with the CNN as the reference point.
 # ---------------------------------------------------------------------------
 def fig_ncars_pareto(mode: str) -> None:
+    """Accuracy against energy across the full sparsity sweep.
+
+    Log x-axis: energy spans 2.9 to 228 uJ, a factor of ~80, and a linear scale
+    compresses the entire sparse end into the left margin. Error bars are the
+    observed half-range across seeds where repeats exist.
+    """
     t = THEMES[mode]
     sweep = load_ncars_sweep()
-    summary = load_ncars_summary()
-    cnn = next(r for r in summary if r["model"] == "cnn")
+    cnn = next(r for r in load_ncars_summary() if r["model"] == "cnn")
 
-    fig, ax = new_fig(t, 7.0, 4.6)
+    fig, ax = new_fig(t, 7.4, 4.8)
 
     xs = [float(r["energy_uj"]) for r in sweep]
     ys = [float(r["accuracy"]) for r in sweep]
+    errs = [float(r["accuracy_spread"]) for r in sweep]
     lams = [float(r["sparsity_lambda"]) for r in sweep]
 
-    # The SNN family, ordered by lambda.
-    ax.plot(xs, ys, color=t["series"][1], linewidth=1.6, alpha=0.55, zorder=2)
-    ax.scatter(xs, ys, s=110, color=t["series"][1], zorder=3,
-               edgecolor=t["surface"], linewidth=2, label="SNN (sparsity sweep)")
+    ax.plot(xs, ys, color=t["series"][1], linewidth=1.6, alpha=0.5, zorder=2)
+    ax.errorbar(xs, ys, yerr=errs, fmt="none", ecolor=t["series"][1],
+                elinewidth=1.4, capsize=4, alpha=0.85, zorder=3)
+    ax.scatter(xs, ys, s=95, color=t["series"][1], zorder=4,
+               edgecolor=t["surface"], linewidth=1.8, label="SNN (sparsity sweep)")
 
-    # Label the two endpoints -- the ones the argument rests on.
-    for x, y, lam in zip(xs, ys, lams):
-        if lam in (0.0, 1.0):
-            ax.annotate(f"lambda={lam:g}\n{y:.2f}%  {x:.0f} uJ", (x, y),
-                        xytext=(12, -6 if lam == 0.0 else 14),
-                        textcoords="offset points", color=t["series"][1],
-                        fontsize=9.5, fontweight="bold", linespacing=1.4)
+    # Name the three points the write-up actually refers to.
+    best = max(range(len(ys)), key=lambda i: ys[i] if lams[i] > 0 else -1)
+    cheapest = min(range(len(xs)), key=lambda i: xs[i])
+    for i, offset in ((best, (8, 18)), (cheapest, (14, -6)), (0, (14, 12))):
+        ax.annotate(f"lambda={lams[i]:g}\n{ys[i]:.2f}%  {xs[i]:.1f} uJ",
+                    (xs[i], ys[i]), xytext=offset, textcoords="offset points",
+                    color=t["series"][1], fontsize=9, fontweight="bold",
+                    linespacing=1.4)
 
     cx, cy = float(cnn["energy_uj"]), float(cnn["accuracy"])
-    ax.scatter([cx], [cy], s=150, color=t["series"][0], zorder=3,
-               edgecolor=t["surface"], linewidth=2, label="CNN")
-    ax.annotate(f"CNN\n{cy:.2f}%  {cx:.0f} uJ", (cx, cy), xytext=(-16, -34),
+    ax.scatter([cx], [cy], s=140, color=t["series"][0], zorder=4,
+               edgecolor=t["surface"], linewidth=1.8, label="CNN")
+    ax.annotate(f"CNN\n{cy:.2f}%  {cx:.0f} uJ", (cx, cy), xytext=(-4, -34),
                 textcoords="offset points", color=t["series"][0],
-                fontsize=9.5, fontweight="bold", ha="center", linespacing=1.4)
+                fontsize=9, fontweight="bold", ha="center", linespacing=1.4)
 
-    ax.set_xlabel("estimated energy per sample (uJ) - lower is better",
+    ax.set_xscale("log")
+    ax.set_xlabel("estimated energy per sample (uJ, log scale) - lower is better",
                   color=t["secondary"], fontsize=10)
     ax.set_ylabel("accuracy (%) - higher is better", color=t["secondary"], fontsize=10)
-    ax.set_title("N-CARS: 7.3x less energy for 2.9 points of accuracy",
+    ax.set_title("N-CARS: the accuracy/energy front, traced",
                  color=t["ink"], fontsize=13, fontweight="bold", loc="left", pad=14)
-    ax.set_xlim(0, 250)
-    ax.set_ylim(84.5, 93)
+    ax.set_ylim(84, 93.5)
     style_axes(ax, t)
-    ax.xaxis.grid(True, color=t["grid"], linewidth=0.8)
+    ax.xaxis.grid(True, color=t["grid"], linewidth=0.8, which="both")
     leg = ax.legend(loc="lower right", frameon=False, fontsize=9.5, scatterpoints=1)
     for txt in leg.get_texts():
         txt.set_color(t["secondary"])
@@ -304,42 +312,51 @@ def fig_ncars_pareto(mode: str) -> None:
 
 
 def fig_ncars_sweep(mode: str) -> None:
-    """Two panels: the penalty drives density down, and energy follows.
+    """Three panels: what the penalty does to density, energy and accuracy.
 
-    Separate panels rather than a dual axis -- density is a percentage and
-    energy is microjoules, and overlaying two scales on one plot is the single
-    most misleading thing a chart can do.
+    Separate panels rather than a dual axis -- percent, microjoules and percent
+    accuracy are three different scales, and overlaying them is the single most
+    misleading thing a chart can do.
     """
     t = THEMES[mode]
     sweep = load_ncars_sweep()
     lams = [float(r["sparsity_lambda"]) for r in sweep]
     xs = list(range(len(lams)))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8.4, 3.8), dpi=200)
+    fig, axes = plt.subplots(1, 3, figsize=(11.4, 3.8), dpi=200)
     fig.patch.set_facecolor(t["surface"])
 
     panels = [
-        (ax1, "mean spike density (%)",
-         [float(r["mean_density"]) for r in sweep], t["series"][1], "{:.1f}%"),
-        (ax2, "estimated energy per sample (uJ)",
-         [float(r["energy_uj"]) for r in sweep], t["series"][2], "{:.0f}"),
+        (axes[0], "mean spike density (%)",
+         [float(r["mean_density"]) for r in sweep], t["series"][1], "{:.0f}", None),
+        (axes[1], "estimated energy per sample (uJ)",
+         [float(r["energy_uj"]) for r in sweep], t["series"][2], "{:.0f}", "log"),
+        (axes[2], "accuracy (%)",
+         [float(r["accuracy"]) for r in sweep], t["series"][0], "{:.1f}",
+         [float(r["accuracy_spread"]) for r in sweep]),
     ]
-    for ax, title, values, color, fmt in panels:
+    for ax, title, values, color, fmt, extra in panels:
+        if isinstance(extra, list):
+            ax.errorbar(xs, values, yerr=extra, fmt="none", ecolor=color,
+                        elinewidth=1.2, capsize=3, alpha=0.8)
         ax.plot(xs, values, color=color, linewidth=2.0, marker="o", markersize=5,
-                markeredgecolor=t["surface"], markeredgewidth=1.2)
+                markeredgecolor=t["surface"], markeredgewidth=1.2, zorder=3)
         for x, v in zip(xs, values):
             ax.annotate(fmt.format(v), (x, v), xytext=(0, 9),
                         textcoords="offset points", ha="center",
-                        color=t["secondary"], fontsize=8.5)
+                        color=t["secondary"], fontsize=8)
         ax.set_title(title, color=t["ink"], fontsize=10.5, fontweight="bold",
                      loc="left", pad=10)
         ax.set_xticks(xs)
-        ax.set_xticklabels([f"{l:g}" for l in lams])
+        ax.set_xticklabels([f"{l:g}" for l in lams], fontsize=8)
         ax.set_xlabel("sparsity penalty (lambda)", color=t["secondary"], fontsize=9.5)
-        ax.set_ylim(0, max(values) * 1.3)
+        if extra == "log":
+            ax.set_yscale("log")
+        elif not isinstance(extra, list):
+            ax.set_ylim(0, max(values) * 1.3)
         style_axes(ax, t)
 
-    fig.suptitle("The sparsity penalty cuts energy 3.2x at no accuracy cost",
+    fig.suptitle("Raising the penalty buys a 36x energy cut for 1.8 accuracy points",
                  color=t["ink"], fontsize=13, fontweight="bold", x=0.005, ha="left", y=1.06)
     fig.tight_layout()
     save(fig, "ncars-sweep", mode)

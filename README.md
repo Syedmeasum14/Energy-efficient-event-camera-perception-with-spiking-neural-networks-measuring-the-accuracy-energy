@@ -13,13 +13,13 @@ Two benchmarks, both complete:
 
 | | Dataset | CNN | SNN | Energy saving |
 |---|---|---:|---:|---:|
-| **Rung 2** | N-CARS — real automotive event data | 91.37% | **88.52%** | **7.3×** |
+| **Rung 2** | N-CARS — real automotive event data | 91.37% | **89.13%** | **7.5×** |
 | **Rung 1** | N-MNIST — foundations | 97.85% | 95.55% | 2.5× |
 
 > Energy is **estimated**, not measured on hardware: Horowitz (2014) 45 nm
 > model, 4.6 pJ per MAC and 0.9 pJ per synaptic operation, ignoring memory
-> traffic. Single seed, no hyperparameter search — a soundness check, not a
-> state-of-the-art claim.
+> traffic. Key points carry 3 seeds; the rest are single runs, and there was
+> no hyperparameter search — a soundness check, not a state-of-the-art claim.
 
 ---
 
@@ -32,16 +32,19 @@ samples with no clipping.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-pareto-dark.png">
-  <img alt="Accuracy versus estimated energy on N-CARS. The CNN reaches 91.37% at 228 uJ; the sparsity-penalised SNN reaches 88.52% at 31 uJ." src="docs/figures/ncars-pareto-light.png" width="680">
+  <img alt="Accuracy versus estimated energy on N-CARS across nine sparsity settings. The CNN reaches 91.37% at 228 uJ; the SNN reaches 89.13% at 30 uJ and still scores 86.21% at 2.9 uJ." src="docs/figures/ncars-pareto-light.png" width="680">
 </picture>
 
 | Model | Accuracy | Operations / sample | Est. energy / sample | Spike density | Params |
 |---|---:|---:|---:|---:|---:|
 | CNN | **91.37%** | 49.56 M MAC | 227.97 µJ | — | 98,226 |
-| SNN (no penalty) | 88.27% | 120.88 M SynOp | 108.79 µJ | 37.9% | 102,118 |
-| **SNN (λ = 1.0)** | **88.52%** | 34.87 M SynOp | **31.38 µJ** | 22.0% | 102,118 |
+| SNN (no penalty) | 88.05% ± 0.62 | 114.30 M SynOp | 102.86 µJ | 36.9% | 102,118 |
+| **SNN (λ = 1.0)** | **89.13% ± 0.88** | 33.67 M SynOp | **30.30 µJ** | 21.2% | 102,118 |
+| SNN (λ = 10) | 86.21% | 3.18 M SynOp | 2.87 µJ | 5.8% | 102,118 |
 
-**7.3× less energy for 2.9 points of accuracy.**
+**7.5× less energy for 2.24 points of accuracy** at λ=1.0, rising to
+**79.4×** at λ=10 for 5.16 points. Accuracies with ± are means over 3 seeds
+(observed half-range); the rest are single runs.
 
 ## Against published results on the same benchmark
 
@@ -49,7 +52,7 @@ samples with no clipping.
 |---|---:|---|
 | **Our CNN** | **91.37%** | |
 | [HATS](https://openaccess.thecvf.com/content_cvpr_2018/papers/Sironi_HATS_Histograms_of_CVPR_2018_paper.pdf) (Sironi et al., CVPR 2018) | 90.2% | the dataset's own paper |
-| **Our SNN** | **88.52%** | |
+| **Our SNN** | **89.13%** | mean of 3 seeds |
 | [CarSNN](https://arxiv.org/pdf/2107.00401) (Viale et al., IJCNN 2021) | 86.94% | SNN deployed to Loihi |
 | Gabor-SNN | 78.9% | |
 | HOTS | 62.4% | |
@@ -59,34 +62,60 @@ single runs at one seed, no hyperparameter search, and the protocol is not
 matched to CarSNN's (they use an attention window; we use the full crop). This
 establishes the implementation is sound — it is not a SOTA claim.
 
-## The sparsity sweep — and a result that contradicted the premise
+## The sparsity sweep
 
-Six values of the firing-rate penalty `λ`, run in parallel on Modal T4s,
-30 epochs each.
+Nine values of the firing-rate penalty `λ`, run in parallel on Modal T4s,
+30 epochs each. Three values carry seed repeats (n=3); the spread is the
+observed half-range, not a standard deviation — with three runs a std implies
+more distributional information than the data supports.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-sweep-dark.png">
-  <img alt="Sweeping the sparsity penalty from 0 to 1.0 drops spike density from 36.7% to 22.0% and energy from 101 uJ to 31 uJ, while accuracy stays flat." src="docs/figures/ncars-sweep-light.png" width="800">
-</picture>
+| λ | accuracy | seeds | spike density | est. energy | vs CNN |
+|---|---:|---:|---:|---:|---:|
+| 0 | 88.05% ± 0.62 | 3 | 36.9% | 102.86 µJ | 2.2× |
+| 0.01 | 87.29% | 1 | 37.4% | 105.63 µJ | 2.2× |
+| 0.05 | 87.19% ± 1.05 | 3 | 34.9% | 89.89 µJ | 2.5× |
+| 0.1 | 88.24% | 1 | 33.5% | 82.22 µJ | 2.8× |
+| 0.5 | 88.44% | 1 | 25.6% | 41.90 µJ | 5.4× |
+| **1** | **89.13% ± 0.88** | **3** | **21.2%** | **30.30 µJ** | **7.5×** |
+| 2 | 88.67% | 1 | 16.4% | 21.00 µJ | 10.9× |
+| 5 | 87.27% | 1 | 9.1% | 6.72 µJ | 33.9× |
+| 10 | 86.21% | 1 | 5.8% | 2.87 µJ | 79.4× |
 
-| λ | accuracy | spike density | est. energy | SynOps |
-|---|---:|---:|---:|---:|
-| 0.0 | 88.50% | 36.7% | 100.65 µJ | 111.83 M |
-| 0.01 | 87.29% | 37.4% | 105.63 µJ | 117.36 M |
-| 0.05 | 86.36% | 34.9% | 90.06 µJ | 100.07 M |
-| 0.1 | 88.24% | 33.5% | 82.22 µJ | 91.35 M |
-| 0.5 | 88.44% | 25.6% | 41.90 µJ | 46.55 M |
-| **1.0** | **88.52%** | **22.0%** | **31.38 µJ** | **34.87 M** |
+CNN reference: **91.37%**, 49.56 M MAC, **227.97 µJ**.
 
-The penalty was built on the assumption that sparsity must be **bought** with
-accuracy — that assumption is the entire reason a Pareto front is the expected
-output. **On N-CARS it costs nothing.** λ=1.0 is marginally *more* accurate
-than λ=0 while using 3.2× less energy.
+### The penalty does not cost accuracy
 
-The unpenalised network was simply spiking more than the task required —
-activity carrying no information. Nothing in a plain cross-entropy loss
-discourages that, so the optimiser had no reason to stop. This is what moved the
-result against the CNN from 2.1× to **7.3×**.
+At λ=1.0 the network is **89.13% ± 0.88** against the unpenalised **88.05% ±
+0.62** — a mean 1.08 points *higher* while using 3.4× less energy. The observed
+ranges overlap slightly (88.25–90.01 vs 87.43–88.67), so the honest reading is
+that sparsity is **free here, and possibly beneficial** — not that the
+improvement is established. Separating it would need more seeds.
+
+The mechanism is straightforward: nothing in a plain cross-entropy loss
+discourages spiking, so the unpenalised network fires more than the task
+requires. That activity carries no information, and removing it costs nothing.
+
+### The λ=0.05 dip was noise
+
+The single-seed sweep showed 86.36% at λ=0.05 and it looked like a real
+anomaly. With n=3 it is **87.19% ± 1.05**, overlapping λ=0's range. It was seed
+variance. This is exactly why the repeats were worth the compute — the original
+figure invited a reader to explain a feature that does not exist.
+
+### How far sparsity goes
+
+Pushing λ past 1.0 keeps buying energy at a mild and predictable accuracy cost:
+
+- **λ=2**: 88.67% at 21.00 µJ — **10.9× less energy than the CNN**
+- **λ=5**: 87.27% at 6.72 µJ — **33.9×**
+- **λ=10**: 86.21% at 2.87 µJ — **79.4×**
+
+From λ=0 to λ=10 is a **36× energy cut for 1.84 accuracy points**. There is no
+cliff in this range, only a gentle slope. At the far end the network still
+scores 86.21% — essentially CarSNN's published 86.94% — at roughly 1/80th the
+CNN's energy.
+
+λ=2, 5 and 10 are **single-seed**; only λ=0, 0.05 and 1.0 carry repeats.
 
 ## Predictions on real driving data
 
@@ -107,10 +136,10 @@ lack of data. Confident errors on data-rich inputs are the failure mode that
 matters for a safety-critical application, and calibration is not something
 this project has measured.
 
-**Known gaps:** single seed, so the dip at λ=0.05 can't be called noise with
-confidence. And density is still 22% at λ=1.0 with accuracy never falling — the
-point where sparsity finally costs something was never found, so the front is
-not fully traced.
+**Known gaps:** λ=2, 5 and 10 are single-seed, and the CNN baseline is too — it
+is the denominator of every energy ratio. Timesteps were never varied: the
+relation is `5.1/(T×r)` and only `r` was ever attacked, so `T=10` throughout.
+Calibration is unmeasured.
 
 → Full write-up: [`docs/RUNG2_NCARS.md`](docs/RUNG2_NCARS.md)
 
@@ -203,8 +232,8 @@ advantage  ≈  (E_MAC / E_SOP) / (timesteps × firing rate)  =  5.1 / (T × r)
 
 The 5.1× from binary spikes is free. Everything after is a fight to keep
 `T × r` small — which is precisely what the N-CARS sweep exploits: dropping
-density from 36.7% to 22.0% moved the advantage from 2.1× to 7.3× at no
-accuracy cost.
+density from 36.9% to 21.2% moved the advantage from 2.2× to 7.5× at no
+accuracy cost, and pushing to 5.8% reaches 79.4×.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/firing-rate-dark.png">

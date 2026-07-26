@@ -1,0 +1,130 @@
+[
+  {
+    "seed": 43,
+    "sparsity_lambda": 0.0,
+    "args": {
+      "data_root": "/data/ncars",
+      "epochs": 30,
+      "batch_size": 64,
+      "lr": 0.002,
+      "num_bins": 5,
+      "num_steps": 10,
+      "width": 16,
+      "blocks": 4,
+      "sparsity_lambda": 0.0,
+      "threshold": 0.5,
+      "subset": null,
+      "skip_cnn": true,
+      "plain_bn": false,
+      "workers": 2,
+      "device": "auto",
+      "out": "/runs/v2_s43_l0.0",
+      "seed": 43
+    },
+    "snn": {
+      "accuracy": 0.8726617869176252,
+      "synops": 118236313.09846747,
+      "energy_uj": 106.41268178862073,
+      "mean_density": 0.3760876352596097,
+      "timesteps": 10,
+      "sparsity_lambda": 0.0,
+      "params": 102118
+    }
+  },
+  {
+    "seed": 43,
+    "sparsity_lambda": 1.0,
+    "args": {
+      "data_root": "/data/ncars",
+      "epochs": 30,
+      "batch_size": 64,
+      "lr": 0.002,
+      "num_bins": 5,
+      "num_steps": 10,
+      "width": 16,
+      "blocks": 4,
+      "sparsity_lambda": 1.0,
+      "threshold": 0.5,
+      "subset": null,
+      "skip_cnn": true,
+      "plain_bn": false,
+      "workers": 2,
+      "device": "auto",
+      "out": "/runs/v2_s43_l1.0",
+      "seed": 43
+    },
+    "snn": {
+      "accuracy": 0.9027535726734054,
+      "synops": 28771938.430390477,
+      "energy_uj": 25.89474458735143,
+      "mean_density": 0.19916959398891776,
+      "timesteps": 10,
+      "sparsity_lambda": 1.0,
+      "params": 102118
+    }
+  },
+  {
+    "seed": 44,
+    "sparsity_lambda": 0.0,
+    "args": {
+      "data_root": "/data/ncars",
+      "epochs": 30,
+      "batch_size": 64,
+      "lr": 0.002,
+      "num_bins": 5,
+      "num_steps": 10,
+      "width": 16,
+      "blocks": 4,
+      "sparsity_lambda": 0.0,
+      "threshold": 0.5,
+      "subset": null,
+      "skip_cnn": true,
+      "plain_bn": false,
+      "workers": 2,
+      "device": "auto",
+      "out": "/runs/v2_s44_l0.0",
+      "seed": 44
+    },
+    "snn": {
+      "accuracy": 0.8839316835134193,
+      "synops": 112787867.63617575,
+      "energy_uj": 101.50908087255817,
+      "mean_density": 0.3628897097776644,
+      "timesteps": 10,
+      "sparsity_lambda": 0.0,
+      "params": 102118
+    }
+  },
+  {
+    "seed": 44,
+    "sparsity_lambda": 1.0,
+    "args": {
+      "data_root": "/data/ncars",
+      "epochs": 30,
+      "batch_size": 64,
+      "lr": 0.002,
+      "num_bins": 5,
+      "num_steps": 10,
+      "width": 16,
+      "blocks": 4,
+      "sparsity_lambda": 1.0,
+      "threshold": 0.5,
+      "subset": null,
+      "skip_cnn": true,
+      "plain_bn": false,
+      "workers": 2,
+      "device": "auto",
+      "out": "/runs/v2_s44_l1.0",
+      "seed": 44
+    },
+    "snn": {
+      "accuracy": 0.8860230045311955,
+      "synops": 37357024.88268864,
+      "energy_uj": 33.621322394419785,
+      "mean_density": 0.21668869684450326,
+      "timesteps": 10,
+      "sparsity_lambda": 1.0,
+      "params": 102118
+    }
+  }
+]
