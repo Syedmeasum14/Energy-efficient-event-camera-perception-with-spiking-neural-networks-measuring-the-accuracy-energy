@@ -31,7 +31,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from src.engine.energy import EnergyCounter, EnergyReport
-from src.models.lif import LIF, collect_firing_rates
+from src.models.lif import LIF, collect_firing_rates, firing_rate_loss
 
 
 @dataclass
@@ -104,12 +104,10 @@ def run_epoch(
                 rate_sum += rate
                 rate_batches += 1
                 if sparsity_lambda > 0:
-                    # Penalise firing. Note this uses the *measured* rate, which
-                    # is a detached scalar -- it biases the reported loss but
-                    # cannot itself produce gradients. For a differentiable
-                    # version, penalise the spike tensors directly; that is a
-                    # Rung 2 refinement and is called out in the plan.
-                    loss = loss + sparsity_lambda * rate
+                    # Differentiable firing-rate penalty: gradients flow back
+                    # through the spikes, so the optimizer actually pursues
+                    # sparsity rather than merely being scored on it.
+                    loss = loss + sparsity_lambda * firing_rate_loss(model)
 
         if training:
             optimizer.zero_grad(set_to_none=True)

@@ -244,3 +244,86 @@ def test_tiny_snn_learns_a_trivial_task():
     assert last_loss < first_loss * 0.5, (
         f"SNN failed to learn: {first_loss:.4f} -> {last_loss:.4f}"
     )
+
+
+# --------------------------------------------------------------------------
+# Differentiable firing-rate penalty (the Rung 2 sparsity sweep depends on it)
+# --------------------------------------------------------------------------
+
+def test_firing_rate_loss_is_differentiable():
+    """THE point of this function. The old detached version reported a
+    plausible number but produced no gradient, so lambda did nothing."""
+    from src.models.lif import firing_rate_loss
+
+    net = torch.nn.Sequential(torch.nn.Linear(8, 16), LIF(beta=0.9, threshold=0.2))
+    reset_all(net)
+    x = torch.randn(4, 8)
+    for _ in range(5):
+        net(x)
+
+    loss = firing_rate_loss(net)
+    assert loss.requires_grad, "penalty is detached -- lambda would have no effect"
+    loss.backward()
+    grad = net[0].weight.grad
+    assert grad is not None and grad.abs().sum() > 0
+
+
+def test_firing_rate_loss_matches_reported_rate():
+    """The differentiable value must agree with the detached diagnostic,
+    otherwise the logged firing rate is not what is being optimised."""
+    from src.models.lif import collect_firing_rates, firing_rate_loss
+
+    net = torch.nn.Sequential(torch.nn.Linear(8, 16), LIF(beta=0.9, threshold=0.2))
+    reset_all(net)
+    x = torch.randn(4, 8)
+    for _ in range(6):
+        net(x)
+
+    reported = sum(collect_firing_rates(net).values()) / 1
+    assert firing_rate_loss(net).item() == pytest.approx(reported, abs=1e-5)
+
+
+def test_firing_rate_loss_zero_without_lif():
+    from src.models.lif import firing_rate_loss
+
+    net = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.ReLU())
+    assert firing_rate_loss(net).item() == 0.0
+
+
+def test_penalty_actually_reduces_firing():
+    """End-to-end: training with a large lambda must produce a sparser network
+    than training without it. This is the mechanism the Pareto sweep rides on."""
+    from src.models.lif import collect_firing_rates
+
+    def train(lam):
+        torch.manual_seed(0)
+        net = torch.nn.Sequential(torch.nn.Linear(20, 40), LIF(beta=0.9, threshold=0.3))
+        opt = torch.optim.Adam(net.parameters(), lr=0.05)
+        x = torch.randn(16, 20)
+        for _ in range(30):
+            reset_all(net)
+            out = sum(net(x) for _ in range(4)) / 4.0
+            loss = torch.nn.functional.mse_loss(out, torch.ones_like(out))
+            if lam:
+                from src.models.lif import firing_rate_loss
+                loss = loss + lam * firing_rate_loss(net)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        return sum(collect_firing_rates(net).values())
+
+    assert train(5.0) < train(0.0), "sparsity penalty had no effect on firing"
+
+
+def test_reset_clears_differentiable_accumulator():
+    """A stale graph across samples would leak memory and corrupt gradients."""
+    from src.models.lif import firing_rate_loss
+
+    lif = LIF(beta=0.9, threshold=0.1)
+    lif.reset()
+    for _ in range(3):
+        lif(torch.randn(2, 5))
+    assert lif.rate_sum is not None
+    lif.reset()
+    assert lif.rate_sum is None
+    assert firing_rate_loss(lif).item() == 0.0

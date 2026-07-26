@@ -181,6 +181,11 @@ class LIF(StatefulModule):
         self.spike_count: float = 0.0
         self.step_count: int = 0
 
+        # Differentiable running sum of per-step mean firing rates. Unlike
+        # spike_count above this keeps its autograd graph, so it can be used
+        # in the loss.
+        self.rate_sum: torch.Tensor | None = None
+
     # Clamp bound on the raw logit. sigmoid(8) = 0.99966, sigmoid(-8) = 0.00034.
     # Without this, a logit the optimizer pushes past ~17 saturates sigmoid to
     # *exactly* 1.0 in float32 -- beta = 1.0 means a neuron that never leaks, so
@@ -198,6 +203,7 @@ class LIF(StatefulModule):
         self.v = None
         self.spike_count = 0.0
         self.step_count = 0
+        self.rate_sum = None
 
     def forward(self, current: torch.Tensor) -> torch.Tensor:
         """Advance one timestep. `current` is the input I[t]."""
@@ -235,9 +241,18 @@ class LIF(StatefulModule):
             # faithful, discards the excess.
             self.v = self.v * (1.0 - s.detach())
 
-        # 4. Diagnostics.
+        # 4. Diagnostics (detached -- reporting only, no gradient).
         self.spike_count += float(s.detach().sum().item())
         self.step_count += 1
+
+        # 5. Differentiable firing-rate accumulator.
+        #    Kept as a running scalar rather than a list of spike tensors: the
+        #    graph is preserved either way, but this costs O(1) memory instead
+        #    of O(T x batch x neurons), which matters at Rung 3 resolutions.
+        #    Consumed by firing_rate_loss() to make sparsity a training
+        #    objective rather than something merely observed.
+        rate = s.mean()
+        self.rate_sum = rate if self.rate_sum is None else self.rate_sum + rate
 
         return s
 
@@ -281,3 +296,31 @@ def collect_firing_rates(module: nn.Module) -> dict[str, float]:
         for name, m in module.named_modules()
         if isinstance(m, LIF)
     }
+
+
+def firing_rate_loss(module: nn.Module) -> torch.Tensor:
+    """Mean firing rate across LIF layers, as a DIFFERENTIABLE scalar.
+
+    Add to the training loss to make sparsity an explicit objective:
+
+        loss = cross_entropy + lambda * firing_rate_loss(model)
+
+    Without this term nothing stops the optimizer from firing constantly.
+    Dense firing usually buys slightly better accuracy, so gradient descent
+    will happily trade away the entire reason for using an SNN -- because
+    nothing in the loss told it not to.
+
+    Note this is the gradient-carrying counterpart to `collect_firing_rates`,
+    which is detached and for reporting only. Sweeping lambda traces the
+    accuracy/energy Pareto front.
+
+    Returns a zero scalar if the network has no LIF layers or has not run.
+    """
+    rates = [
+        m.rate_sum / m.step_count
+        for m in module.modules()
+        if isinstance(m, LIF) and m.rate_sum is not None and m.step_count > 0
+    ]
+    if not rates:
+        return torch.zeros(())
+    return torch.stack(rates).mean()
