@@ -1,0 +1,4 @@
+model,label,norm,accuracy,operations_m,op_kind,energy_uj,params,mean_density
+cnn,CNN,batchnorm,97.85,3.344,MAC,15.38,24634,
+snn_bntt,SNN (BNTT),bntt,95.55,6.949,SynOp,6.25,26221,0.402
+snn_plain,SNN (plain BatchNorm),batchnorm,66.10,8.000,SynOp,7.20,26221,0.420
