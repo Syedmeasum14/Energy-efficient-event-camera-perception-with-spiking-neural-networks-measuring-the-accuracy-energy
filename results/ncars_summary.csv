@@ -1,0 +1,4 @@
+model,label,accuracy,operations_m,op_kind,energy_uj,params,mean_density
+cnn,CNN,91.37,49.56,MAC,227.97,98226,
+snn,SNN (lambda=0),88.27,120.88,SynOp,108.79,102118,0.379
+snn_sparse,SNN (lambda=1.0),88.52,34.87,SynOp,31.38,102118,0.22

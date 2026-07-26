@@ -11,30 +11,70 @@ with the same architecture on both sides and a real operation count underneath.
 
 ---
 
-## Headline result
+## Headline result — N-CARS (real automotive event data)
+
+24,029 recordings from an ATIS event camera mounted behind a car windshield in
+urban driving. Car vs background, 100 ms per sample.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/accuracy-vs-energy-dark.png">
-  <img alt="Accuracy versus estimated inference energy. The SNN with BNTT reaches 95.55% at 6.25 uJ; the CNN reaches 97.85% at 15.38 uJ." src="docs/figures/accuracy-vs-energy-light.png" width="620">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-pareto-dark.png">
+  <img alt="Accuracy versus estimated energy on N-CARS. The CNN reaches 91.37% at 228 uJ; the sparsity-penalised SNN reaches 88.52% at 31 uJ." src="docs/figures/ncars-pareto-light.png" width="680">
 </picture>
+
+| Model | Accuracy | Operations / sample | Est. energy / sample | Spike density |
+|---|---:|---:|---:|---:|
+| CNN | **91.37%** | 49.56 M MAC | 227.97 uJ | — |
+| SNN (no penalty) | 88.27% | 120.88 M SynOp | 108.79 uJ | 37.9% |
+| **SNN (λ = 1.0)** | **88.52%** | 34.87 M SynOp | **31.38 uJ** | 22.0% |
+
+**7.3x less energy for 2.9 points of accuracy.**
+
+### Against published results on the same benchmark
+
+| Method | Accuracy | |
+|---|---:|---|
+| Our CNN | 91.37% | |
+| [HATS](https://openaccess.thecvf.com/content_cvpr_2018/papers/Sironi_HATS_Histograms_of_CVPR_2018_paper.pdf) (Sironi et al., CVPR 2018) | 90.2% | the dataset's own paper |
+| **Our SNN** | **88.52%** | |
+| [CarSNN](https://arxiv.org/pdf/2107.00401) (Viale et al., IJCNN 2021) | 86.94% | SNN deployed to Loihi |
+| Gabor-SNN | 78.9% | |
+| HOTS | 62.4% | |
+
+These are single runs at one seed with no hyperparameter search, and the
+protocol is not matched to CarSNN's (they use an attention window; we use the
+full crop). Treat it as a sanity check that the implementation is sound, not
+as a state-of-the-art claim.
+
+### The sparsity penalty is free
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-sweep-dark.png">
+  <img alt="Sweeping the sparsity penalty from 0 to 1.0 drops spike density from 36.7% to 22.0% and energy from 101 uJ to 31 uJ, while accuracy stays flat." src="docs/figures/ncars-sweep-light.png" width="800">
+</picture>
+
+Sweeping λ over `{0, 0.01, 0.05, 0.1, 0.5, 1.0}` — six runs in parallel on
+Modal — drops spike density from 36.7% to 22.0% and energy from 101 uJ to
+31 uJ, **a 3.2x saving while accuracy stays flat** (88.50% -> 88.52%).
+
+That is the interesting part. The penalty was added on the assumption that
+sparsity would have to be bought with accuracy. On N-CARS it costs nothing:
+the unpenalised network was simply spiking more than the task required.
+
+> Energy is **estimated**, not measured on hardware. Horowitz (2014) 45 nm
+> model — 4.6 pJ per MAC, 0.9 pJ per synaptic operation — ignoring memory
+> traffic, which often dominates real accelerators.
+
+---
+
+## Rung 1 record — N-MNIST
+
+The foundations, validated on a toy dataset before moving to real data.
 
 | Model | Accuracy | Operations / sample | Est. energy / sample | Params |
 |---|---:|---:|---:|---:|
-| CNN | **97.85%** | 3.34 M MAC | 15.38 µJ | 24,634 |
-| **SNN + BNTT** | **95.55%** | 6.95 M SynOp | **6.25 µJ** | 26,221 |
-| SNN, plain BatchNorm | 66.10% | 8.00 M SynOp | 7.20 µJ | 26,221 |
-
-**2.30 points of accuracy for 2.5× less estimated energy.**
-
-> Energy is **estimated**, not measured on hardware. It uses the Horowitz (2014)
-> 45 nm model — 4.6 pJ per MAC, 0.9 pJ per synaptic operation — and ignores
-> memory traffic, which often dominates real accelerators.
-
-Benchmark: N-MNIST, 8,000-sample training subset, 15 epochs, 10 timesteps.
-Both models share the same architecture, depth, and width — only the neuron
-type and the input representation differ.
-
----
+| CNN | 97.85% | 3.34 M MAC | 15.38 uJ | 24,634 |
+| SNN + BNTT | 95.55% | 6.95 M SynOp | 6.25 uJ | 26,221 |
+| SNN, plain BatchNorm | 66.10% | 8.00 M SynOp | 7.20 uJ | 26,221 |
 
 ## What the model actually sees
 
@@ -114,10 +154,10 @@ The 5.1× from binary spikes is free. Everything after is a fight to keep
   <img alt="Mean firing rate across training, settling near 21 percent for both SNN runs." src="docs/figures/firing-rate-light.png" width="700">
 </picture>
 
-At `T=10` and `r≈21%` the denominator is ~2.1, which is where the 2.5× comes
-from. **That's the remaining headroom**: driving density toward 10% via the
-firing-rate penalty and a higher threshold should push this well past 5×.
-Tracing that curve is the next experiment.
+At `T=10` and `r≈21%` the denominator is ~2.1, which is where N-MNIST's 2.5×
+comes from. Density is therefore the lever, and the N-CARS sweep above pulls
+it: dropping from 36.7% to 22.0% took energy from 101 uJ to 31 uJ and moved
+the advantage over the CNN from 2.1× to **7.3×**, with accuracy unchanged.
 
 ---
 
@@ -154,7 +194,19 @@ pip install -r requirements.txt
 python -m pytest tests/ -q        # 100 tests
 ```
 
-Reproduce the benchmark:
+Reproduce the N-CARS benchmark (needs the dataset — see `docs/SETUP.md`):
+
+```bash
+PYTHONPATH=. python scripts/run_ncars.py --epochs 30 --batch-size 64
+```
+
+Or run it on Modal GPUs, including the six-point sweep in parallel:
+
+```bash
+modal run --detach modal_app.py::sweep
+```
+
+The Rung 1 benchmark:
 
 ```bash
 PYTHONPATH=. python scripts/run_nmnist.py --epochs 15 --num-steps 10 --lr 5e-3
@@ -179,7 +231,7 @@ PYTHONPATH=. python scripts/demo_energy.py
 | | Status |
 |---|---|
 | **Rung 1** — foundations, energy accounting, N-MNIST | ✅ complete |
-| **Rung 2** — N-CARS: 24,029 real automotive event recordings, firing-rate sweep | next |
+| **Rung 2** — N-CARS: 24,029 real automotive event recordings, sparsity sweep | ✅ complete |
 | **Rung 3** — object detection with bounding boxes on driving data (GEN1 / DSEC), mAP + latency, day vs night | planned |
 
 **Detection results with bounding boxes do not exist yet** — that is Rung 3.

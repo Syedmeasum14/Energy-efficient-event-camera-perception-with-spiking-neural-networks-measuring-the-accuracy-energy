@@ -1,0 +1,36 @@
+{
+  "args": {
+    "data_root": "/data/ncars",
+    "epochs": 30,
+    "batch_size": 64,
+    "lr": 0.002,
+    "num_bins": 5,
+    "num_steps": 10,
+    "width": 16,
+    "blocks": 4,
+    "sparsity_lambda": 0.0,
+    "threshold": 0.5,
+    "subset": null,
+    "skip_cnn": false,
+    "plain_bn": false,
+    "workers": 2,
+    "device": "auto",
+    "out": "/runs/ncars",
+    "seed": 42
+  },
+  "cnn": {
+    "accuracy": 0.9136749157662368,
+    "macs": 49559296,
+    "energy_uj": 227.97276159999998,
+    "params": 98226
+  },
+  "snn": {
+    "accuracy": 0.882653654002556,
+    "synops": 120876554.89905798,
+    "energy_uj": 108.7888994091522,
+    "mean_density": 0.37903646054444834,
+    "timesteps": 10,
+    "sparsity_lambda": 0.0,
+    "params": 102118
+  }
+}
