@@ -1,0 +1,69 @@
+# Base config. Machine-specific paths go in configs/local.yaml (gitignored),
+# which is deep-merged over this file at load time. Never hardcode a path.
+
+dataset:
+  name: dsec_det
+  root: null            # set in local.yaml, e.g. /data/dsec
+  height: 480
+  width: 640
+  # Sequences chosen for a balanced day/night split. Filled in during Phase 1
+  # once we see what DSEC-Det actually ships with.
+  train_sequences: []
+  val_sequences: []
+  day_sequences: []
+  night_sequences: []
+
+  # Length of the event window collapsed into one training sample, in
+  # microseconds. 50 ms = 20 "frames"/s equivalent. This is a real hyperparameter:
+  # too short and there are not enough events to see an object, too long and
+  # fast-moving objects smear across the window.
+  window_us: 50000
+  # Stride between consecutive windows. Less than window_us means overlap.
+  stride_us: 50000
+
+representation:
+  # One of: histogram | voxel_grid | time_surface | snn_spikes
+  # Models A/B use voxel_grid, model C uses snn_spikes.
+  type: voxel_grid
+  num_bins: 5           # voxel_grid only
+  tau: 50000.0          # time_surface only (microseconds)
+  num_steps: 10         # snn_spikes only
+
+model:
+  id: A                 # A = dense CNN | B = recurrent | C = SNN
+  num_classes: 2        # car, pedestrian
+  backbone_width: 64
+
+  snn:                  # model C only
+    neuron: lif
+    beta: 0.95          # membrane decay per timestep
+    threshold: 1.0
+    surrogate: atan     # arctangent surrogate gradient
+    learn_beta: true
+
+train:
+  epochs: 50
+  batch_size: 8         # tuned for 8 GB VRAM on the RTX 3070
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  optimizer: adamw
+  scheduler: cosine
+  amp: true             # mixed precision; disable for the SNN if it destabilises
+  grad_clip: 1.0
+  num_workers: 4
+  seed: 42
+
+eval:
+  iou_thresholds: [0.5, 0.75]
+  # Report metrics separately for these splits — this is the project's core claim.
+  report_splits: [all, day, night]
+
+energy:
+  # Horowitz (2014), 45nm, 32-bit. Estimates, not hardware measurements.
+  pj_per_mac: 4.6
+  pj_per_sop: 0.9
+
+logging:
+  out_dir: runs
+  log_every: 50
+  checkpoint_every: 1

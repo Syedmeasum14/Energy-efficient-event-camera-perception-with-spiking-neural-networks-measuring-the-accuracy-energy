@@ -1,0 +1,31 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Per-machine config (paths differ between the laptop and the training box)
+configs/local.yaml
+
+# Datasets, checkpoints, run outputs.
+# Leading slash matters: a bare `data/` would also match src/data/, silently
+# excluding the entire data package and breaking the repo on clone.
+/data/
+/runs/
+*.h5
+*.hdf5
+*.npy
+*.pth
+*.ckpt
