@@ -45,7 +45,7 @@ def load_training() -> list[dict]:
 
 
 def load_summary() -> list[dict]:
-    with open(RESULTS / "summary.csv") as f:
+    with open(RESULTS / "nmnist_summary.csv") as f:
         return list(csv.DictReader(f))
 
 
