@@ -71,20 +71,37 @@ def render_polarity(ax, spikes_2ch: np.ndarray, t: dict) -> None:
     _bare(ax)
 
 
-def render_density(ax, counts: np.ndarray, t: dict) -> None:
+def render_density(ax, counts: np.ndarray, t: dict, frame: bool = False) -> None:
     """Accumulated event COUNT on a sequential one-hue ramp.
 
-    Count carries the structure: edges fire repeatedly as the camera saccades,
+    Count carries the structure: edges fire repeatedly as the camera moves,
     flat regions barely fire. Encoding magnitude rather than presence is what
-    makes the digit legible.
+    makes the subject legible -- a binary threshold on the accumulated sum
+    fills the whole shape into a solid blob.
+
+    Normalised to the 99th percentile rather than the max: a single hot pixel
+    would otherwise compress everything else into the palest step, which is
+    what made sparse N-CARS crops look almost blank.
+
+    `frame` draws a hairline around the full canvas. N-CARS crops are variable
+    size and sit in the top-left of a padded 120x100 canvas, so without a frame
+    the panels appear to float at different sizes.
     """
     total = counts.sum(0)
-    peak = total.max()
-    norm = total / peak if peak > 0 else total
+    peak = np.percentile(total, 99.0) if total.max() > 0 else 0.0
+    if peak <= 0:
+        peak = total.max() or 1.0
+    norm = np.clip(total / peak, 0.0, 1.0)
     cmap = matplotlib.colors.LinearSegmentedColormap.from_list(
         "events", [t["surface"], t["ramp_mid"], t["ramp_dark"]])
     ax.imshow(norm, cmap=cmap, interpolation="nearest", vmin=0, vmax=1)
     _bare(ax)
+    if frame:
+        for side in ax.spines.values():
+            side.set_visible(True)
+            side.set_color(t["muted"])
+            side.set_linewidth(0.6)
+            side.set_alpha(0.35)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +195,83 @@ def main() -> None:
         print(f"{mode}:")
         fig_representations(mode)
         fig_predictions(mode)
+        if NCARS_CKPT.exists():
+            fig_ncars_predictions(mode)
+        else:
+            print(f"  skipping N-CARS figure: {NCARS_CKPT} not found")
+
+
+
+
+# ---------------------------------------------------------------------------
+# Rung 2: what the SNN predicts on real automotive event data
+# ---------------------------------------------------------------------------
+NCARS_CKPT = ROOT / "runs" / "ncars_lambda_1.0" / "snn_best.pt"
+NCARS_ROOT = ROOT / "data" / "ncars"
+NCARS_CLASSES = {0: "background", 1: "car"}
+
+
+def fig_ncars_predictions(mode: str, n: int = 12) -> None:
+    """Held-out N-CARS crops with the sparse SNN's prediction and ground truth.
+
+    Uses the lambda=1.0 checkpoint -- the sparse one the README headlines
+    (88.52% at 31 uJ), not the unpenalised baseline.
+    """
+    from src.data.datasets import load_ncars
+
+    t = THEMES[mode]
+    _, test_ds, _ = load_ncars(str(NCARS_ROOT), representation="snn_spikes",
+                               num_steps=NUM_STEPS, subset=600)
+
+    model = SNNClassifier(in_channels=2, num_classes=2, width=16,
+                          num_blocks=4, threshold=0.5, num_steps=NUM_STEPS)
+    model.load_state_dict(
+        torch.load(NCARS_CKPT, weights_only=False, map_location="cpu")["model"])
+    model.eval()
+
+    # Pick a balanced set so the figure is not accidentally all one class.
+    wanted = {0: n // 2, 1: n // 2}
+    picks: list[int] = []
+    for i in range(len(test_ds)):
+        label = test_ds[i][1]
+        if wanted.get(label, 0) > 0:
+            picks.append(i)
+            wanted[label] -= 1
+        if not any(wanted.values()):
+            break
+
+    cols, rows_n = 6, 2
+    fig, axes = plt.subplots(rows_n, cols, figsize=(2.1 * cols, 2.3 * rows_n), dpi=200)
+    fig.patch.set_facecolor(t["surface"])
+
+    correct = 0
+    for idx, ax in zip(picks, axes.flat):
+        spikes, label = test_ds[idx]
+        with torch.no_grad():
+            probs = torch.softmax(model(spikes.unsqueeze(1)), dim=1)[0]
+            pred = int(probs.argmax())
+            conf = float(probs[pred])
+
+        render_density(ax, spikes.numpy().sum(0), t, frame=True)
+        ok = pred == label
+        correct += ok
+        ax.set_title(f"{NCARS_CLASSES[pred]}  ({conf * 100:.0f}%)",
+                     color=t["good"] if ok else t["bad"],
+                     fontsize=9.5, fontweight="bold", pad=6)
+        ax.set_xlabel(f"true: {NCARS_CLASSES[label]}", color=t["muted"],
+                      fontsize=8.5, labelpad=4)
+
+    fig.suptitle(
+        f"N-CARS: spiking network predictions on held-out driving data "
+        f"({correct}/{len(picks)} correct here)",
+        color=t["ink"], fontsize=13, fontweight="bold", x=0.005, ha="left", y=1.04)
+    fig.text(0.005, -0.03,
+             "Recorded from an event camera behind a car windshield. Events accumulated "
+             "over 10 timesteps for display; the model consumes them step by step. "
+             "Full held-out accuracy: 88.52% at 31 uJ/sample.",
+             color=t["muted"], fontsize=9, ha="left")
+    fig.tight_layout()
+    save(fig, "ncars-predictions", mode)
 
 
 if __name__ == "__main__":

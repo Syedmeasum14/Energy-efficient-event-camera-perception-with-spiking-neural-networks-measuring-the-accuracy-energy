@@ -66,6 +66,22 @@ it, so the optimiser had no reason to stop.
 
 This is what moved the headline against the CNN from 2.1x to **7.3x**.
 
+## Predictions on held-out data
+
+![Held-out N-CARS predictions from the sparse SNN](figures/ncars-predictions-light.png)
+
+The lambda=1.0 network -- the sparse one running at 31 uJ -- on held-out crops.
+Car bodies, windshields and headlights are legible in the accumulated events
+with no image sensor involved.
+
+The two errors are not the same kind of failure. One is a hedge: a textured
+background called a car at 58% confidence, sitting on the decision boundary.
+The other is **confidently wrong** -- a car called background at 97%, on a crop
+carrying 5,593 spikes against a median of 3,504 for these samples. It is not
+short of data. Confident errors on data-rich inputs are the failure mode that
+matters for safety-critical use, and this project has not measured calibration
+at all.
+
 ## Against published results
 
 | Method | Accuracy | |

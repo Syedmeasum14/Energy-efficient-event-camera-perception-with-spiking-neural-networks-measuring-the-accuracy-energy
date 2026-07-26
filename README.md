@@ -88,6 +88,25 @@ activity carrying no information. Nothing in a plain cross-entropy loss
 discourages that, so the optimiser had no reason to stop. This is what moved the
 result against the CNN from 2.1× to **7.3×**.
 
+## Predictions on real driving data
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-predictions-dark.png">
+  <img alt="Twelve held-out N-CARS crops with the spiking network's prediction, confidence, and ground truth. Cars are clearly visible in the accumulated event data." src="docs/figures/ncars-predictions-light.png" width="880">
+</picture>
+
+The λ=1.0 spiking network on held-out crops — the sparse model that runs at
+31 µJ. Car bodies, windshields and headlights are visible in the accumulated
+events despite there being no image sensor involved.
+
+The two errors differ in a way worth noting. One is a hedge — a textured
+background called a car at 58% confidence, right at the decision boundary. The
+other is **confidently wrong**: a car called background at 97%, on a crop with
+5,593 spikes, well above the median of 3,504 for these samples. So it is not a
+lack of data. Confident errors on data-rich inputs are the failure mode that
+matters for a safety-critical application, and calibration is not something
+this project has measured.
+
 **Known gaps:** single seed, so the dip at λ=0.05 can't be called noise with
 confidence. And density is still 22% at λ=1.0 with accuracy never falling — the
 point where sparsity finally costs something was never found, so the front is
