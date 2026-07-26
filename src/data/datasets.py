@@ -12,6 +12,7 @@ prepared exactly the same way.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -126,6 +127,103 @@ class SubsetWrapper(Dataset):
 
     def __getitem__(self, idx: int):
         return self.base[int(self.indices[idx])]
+
+
+class NCarsDataset(Dataset):
+    """N-CARS (Sironi et al., CVPR 2018) -- real automotive event recordings.
+
+    24,029 samples of 100 ms each, recorded with an ATIS camera mounted behind
+    a car windshield in urban driving. Binary: is there a car in this crop?
+
+        12,336 car / 11,693 background
+        train: 7,940 car + 7,482 background = 15,422
+        test:  4,396 car + 4,211 background =  8,607
+
+    On-disk layout, as shipped by Prophesee:
+
+        <root>/Prophesee_Dataset_n_cars/
+            n-cars_train/{cars,background}/obj_*_td.dat
+            n-cars_test/{cars,background}/obj_*_td.dat
+
+    Unlike N-MNIST the crops are VARIABLE SIZE -- each sample is a bounding-box
+    crop around the object, so widths and heights differ per file. We pad every
+    sample into a fixed canvas (`sensor_size`) so a batch can be stacked;
+    `max_crop` is the canvas, not the sensor. Events outside it are dropped by
+    EventTensorDataset's bounds guard.
+
+    Label convention: 1 = car, 0 = background.
+    """
+
+    CLASSES = {"background": 0, "cars": 1}
+
+    def __init__(self, root: str | Path, train: bool = True):
+        root = Path(root)
+        # Tolerate the archive being extracted with or without its top folder.
+        for candidate in (root / "Prophesee_Dataset_n_cars", root):
+            split_dir = candidate / ("n-cars_train" if train else "n-cars_test")
+            if split_dir.is_dir():
+                break
+        else:
+            raise FileNotFoundError(
+                f"could not find n-cars_{'train' if train else 'test'} under {root}. "
+                "Expected <root>/Prophesee_Dataset_n_cars/n-cars_train/{cars,background}/"
+            )
+
+        self.samples: list[tuple[Path, int]] = []
+        for class_name, label in sorted(self.CLASSES.items()):
+            class_dir = split_dir / class_name
+            if not class_dir.is_dir():
+                raise FileNotFoundError(f"missing class directory {class_dir}")
+            for path in sorted(class_dir.glob("*.dat")):
+                self.samples.append((path, label))
+
+        if not self.samples:
+            raise FileNotFoundError(f"no .dat files found under {split_dir}")
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        from src.data.prophesee import read_dat
+
+        path, label = self.samples[idx]
+        return read_dat(path), label
+
+
+def load_ncars(
+    root: str,
+    representation: str = "voxel_grid",
+    num_bins: int = 5,
+    num_steps: int = 10,
+    max_crop: tuple[int, int] = (120, 100),
+    subset: int | None = None,
+) -> tuple[EventTensorDataset, EventTensorDataset, tuple[int, int]]:
+    """N-CARS train/test as model-ready tensors.
+
+    `max_crop` is the fixed canvas every variable-size crop is placed into.
+    (120, 100) covers the overwhelming majority of N-CARS boxes; anything
+    larger is clipped by the bounds guard in EventTensorDataset.
+
+    Returns (train, test, canvas_size).
+    """
+    train_base: Dataset = NCarsDataset(root, train=True)
+    test_base: Dataset = NCarsDataset(root, train=False)
+
+    if subset:
+        train_base = SubsetWrapper(train_base, subset)
+        test_base = SubsetWrapper(test_base, max(subset // 4, 1))
+
+    kwargs = dict(
+        sensor_size=max_crop,
+        representation=representation,
+        num_bins=num_bins,
+        num_steps=num_steps,
+    )
+    return (
+        EventTensorDataset(train_base, **kwargs),
+        EventTensorDataset(test_base, **kwargs),
+        max_crop,
+    )
 
 
 def load_nmnist(
