@@ -32,6 +32,10 @@ Two benchmarks, both complete:
 - [Roadmap](#roadmap)
 - [Layout](#layout) · [References](#references)
 
+> **New to the project?** [`docs/WALKTHROUGH.md`](docs/WALKTHROUGH.md) explains
+> every module — what it does, why it exists, how it works — plus the likely
+> questions and their answers. Written for presenting the work.
+
 ---
 
 # Background — the three ideas this rests on
