@@ -26,7 +26,7 @@ Two benchmarks, both complete:
 - [Background — the three ideas this rests on](#background--the-three-ideas-this-rests-on)
 - [Rung 1 — N-MNIST: building the measuring instrument](#rung-1--n-mnist-building-the-measuring-instrument)
 - [Rung 2 — N-CARS: real automotive event data](#rung-2--n-cars-real-automotive-event-data)
-- [Method](#method)
+- [Method](#method) · [Formulas and references](docs/FORMULAS.md)
 - [Setup and reproduction](#setup-and-reproduction)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
@@ -63,6 +63,9 @@ over time, and emits a binary spike when it crosses a threshold:
 V[t] = beta * V[t-1] + I[t]        S[t] = 1 if V[t] >= threshold else 0
 ```
 
+*Discrete LIF — Gerstner & Kistler (2002). Full form, including the reset term,
+in [formula 5](docs/FORMULAS.md#5-lif-neuron-dynamics).*
+
 `beta` is the only source of memory. A spike is exactly 0 or 1 — never a real
 number — which is what makes the energy argument valid.
 
@@ -70,6 +73,9 @@ The catch: a step function has zero derivative everywhere, so backpropagation
 dies. The fix is a **surrogate gradient** — use the true step forward, and a
 smooth approximation of its derivative backward. Forward and backward
 deliberately disagree.
+
+*Technique: Neftci et al. (2019). The arctan form used here: Fang et al.
+(ICCV 2021) — [formula 6](docs/FORMULAS.md#6-surrogate-gradient).*
 
 ### 3. Energy is counted, not assumed
 
@@ -85,6 +91,11 @@ advantage  ≈  (E_MAC / E_SOP) / (timesteps × firing rate)  =  5.1 / (T × r)
 
 The 5.1× from binary spikes is free. Everything after is a fight to keep
 `T × r` small. **That single relation drives every experiment below.**
+
+*Energy constants: Horowitz, ISSCC 2014. SynOps methodology: Rueckauer et al.
+(2017), after Merolla et al. (Science 2014). Derivation in
+[formulas 9–12](docs/FORMULAS.md#9-mac-count) — note the ratio is a first-order
+model; all reported numbers come from the measured counter, not from it.*
 
 ---
 
@@ -241,7 +252,9 @@ samples with no clipping.
 Nine values of the firing-rate penalty `λ`, 15 runs total across three parallel
 launches on Modal T4s, 30 epochs each. Three values carry seed repeats (n=3);
 the spread is the observed half-range, not a standard deviation — with three
-runs a std implies more distributional information than the data supports.
+runs a std implies more distributional information than the data supports
+([formula 15](docs/FORMULAS.md#15-seed-spread)). Overlapping intervals are
+reported as "not separated" — a descriptive convention, not a significance test.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/figures/ncars-sweep-dark.png">
@@ -380,6 +393,28 @@ data — which is exactly what the sparsity sweep exploits.
 binary outputs; AvgPool emits `{0, .25, .5, .75, 1}`, which would silently make
 the following convolution perform real multiplications and invalidate the
 SynOps count.
+
+## Every formula, with its source
+
+Full derivations, symbol tables and code line references are in
+[`docs/FORMULAS.md`](docs/FORMULAS.md).
+
+| Quantity | Formula | Source |
+|---|---|---|
+| [Voxel grid](docs/FORMULAS.md#2-voxel-grid) | `V[b,y,x] = Σᵢ pᵢ · max(0, 1 − \|b − tᵢ*\|)` | Zhu et al., CVPR 2019 |
+| [Time surface](docs/FORMULAS.md#3-time-surface) | `S = exp(−(t_end − t_last) / τ)` | Lagorce et al., TPAMI 2017 |
+| [Spike tensor](docs/FORMULAS.md#4-binary-spike-tensor) | `S[b,c,y,x] = 1` if any event in bin | *standard* |
+| [LIF dynamics](docs/FORMULAS.md#5-lif-neuron-dynamics) | `V[t] = βV[t−1] + I[t] − S[t−1]θ` | Gerstner & Kistler, 2002 |
+| [Surrogate gradient](docs/FORMULAS.md#6-surrogate-gradient) | `∂S/∂x = α / (1 + (παx)²)` | Neftci 2019; Fang, ICCV 2021 |
+| [Learnable decay](docs/FORMULAS.md#7-learnable-decay) | `β = σ(clamp(ℓ, −8, 8))` | Fang et al., ICCV 2021 |
+| [BNTT](docs/FORMULAS.md#8-bntt-batch-normalization-through-time) | per-timestep `(μₜ, σₜ, γₜ, βₜ)` | Kim & Panda, 2021 |
+| [MAC count](docs/FORMULAS.md#9-mac-count) | `MACs = \|O\| · (C_in/g) · k_H · k_W` | *standard* |
+| [SynOps](docs/FORMULAS.md#10-synaptic-operations-synops) | `SynOps = Σ_l Σ_t MACs_l · r_{l,t}` | Merolla 2014; Rueckauer 2017 |
+| [Energy](docs/FORMULAS.md#11-energy-model) | `E = MACs × 4.6 pJ` · `SynOps × 0.9 pJ` | Horowitz, ISSCC 2014 |
+| [Energy ratio](docs/FORMULAS.md#12-energy-ratio) | `E_CNN / E_SNN = 5.1 / (T · r̄)` | *derived here* |
+| [Firing rate](docs/FORMULAS.md#13-firing-rate) | `r = spikes / (N_neurons · T)` | *standard* |
+| [Sparsity penalty](docs/FORMULAS.md#14-sparsity-penalty) | `L = L_CE + λ · (1/L)Σ_l r̄_l` | *standard* regularisation |
+| [Seed spread](docs/FORMULAS.md#15-seed-spread) | `(max − min) / 2`, **not** std | *standard* |
 
 ---
 
