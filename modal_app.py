@@ -72,19 +72,50 @@ runs_volume = modal.Volume.from_name(f"{APP_NAME}-runs", create_if_missing=True)
 VOLUMES = {"/data": data_volume, "/runs": runs_volume}
 
 
-def _run_training(args: list[str]) -> dict:
-    """Invoke scripts/run_ncars.py in-process and return its summary."""
+def _run_training(args: list[str], volume=None, commit_every_s: int = 300) -> dict:
+    """Invoke scripts/run_ncars.py as a subprocess and return its summary.
+
+    Commits the runs volume periodically while training, not just at the end.
+
+    This matters because Modal runs on preemptible capacity. A volume write is
+    only durable once `commit()` is called; until then it lives in the
+    container's view. A first attempt at this sweep lost ~7 GPU-hours of work
+    when containers were reclaimed at epoch 24 of 30 -- checkpoints had been
+    written every time validation improved, but none had been committed, so
+    every one was discarded with the container.
+    """
     import subprocess
     import sys
+    import threading
+    import time
 
     cmd = [sys.executable, "scripts/run_ncars.py", "--data-root", "/data/ncars", *args]
     print("+ " + " ".join(cmd), flush=True)
-    proc = subprocess.run(cmd, cwd="/root/project", env={
+    env = {
         "PYTHONPATH": "/root/project", "PATH": "/usr/local/bin:/usr/bin:/bin",
         "HOME": "/root", "MPLCONFIGDIR": "/tmp/mpl",
-    }, capture_output=False)
-    if proc.returncode != 0:
-        raise RuntimeError(f"training failed with exit code {proc.returncode}")
+    }
+    proc = subprocess.Popen(cmd, cwd="/root/project", env=env)
+
+    stop = threading.Event()
+
+    def _periodic_commit() -> None:
+        while not stop.wait(commit_every_s):
+            try:
+                (volume or runs_volume).commit()
+            except Exception as exc:  # never let a commit failure kill training
+                print(f"[commit] skipped: {exc}", flush=True)
+
+    committer = threading.Thread(target=_periodic_commit, daemon=True)
+    committer.start()
+    try:
+        returncode = proc.wait()
+    finally:
+        stop.set()
+        committer.join(timeout=5)
+
+    if returncode != 0:
+        raise RuntimeError(f"training failed with exit code {returncode}")
 
     out_dir = next((a for i, a in enumerate(args) if args[i - 1] == "--out"), "runs/ncars")
     summary_path = Path("/root/project") / out_dir / "summary.json"
@@ -236,6 +267,122 @@ def sweep(epochs: int = 30) -> None:
     Path("results").mkdir(exist_ok=True)
     Path("results/ncars_sweep.json").write_text(json.dumps(results, indent=2))
     print("\nwrote results/ncars_sweep.json")
+
+
+@app.function(gpu=GPU, volumes=VOLUMES, timeout=TIMEOUT_S,
+               retries=modal.Retries(max_retries=2, initial_delay=10.0))
+def train_point(seed: int, lam: float, epochs: int = 30) -> dict:
+    """One (seed, lambda) point. Fanned out by `sweep_seeds`."""
+    import torch
+
+    print(f"seed={seed} lambda={lam} on {torch.cuda.get_device_name(0)}", flush=True)
+    summary = _run_training([
+        "--epochs", str(epochs), "--batch-size", "64", "--num-steps", "10",
+        "--sparsity-lambda", str(lam), "--seed", str(seed), "--skip-cnn",
+        "--out", f"/runs/v2_s{seed}_l{lam}", "--workers", "2",
+    ])
+    runs_volume.commit()
+    return {"seed": seed, "sparsity_lambda": lam, **summary}
+
+
+@app.local_entrypoint()
+def sweep_seeds(epochs: int = 30) -> None:
+    """Seed repeats plus a lambda extension, in one parallel launch.
+
+    Two questions with different sampling needs:
+
+    1. *Is the published result stable?* Needs several seeds, but only on the
+       lambda values the claims actually rest on -- lambda=0 (the baseline),
+       lambda=0.05 (the unexplained dip), lambda=1.0 (the headline).
+    2. *Where does sparsity finally cost accuracy?* Needs lambda pushed well
+       past 1.0, but one seed is enough to locate a cliff; error bars can come
+       afterwards if the cliff turns out to be interesting.
+
+    A full 3 x 7 grid would be 21 runs for no extra information.
+
+    Budget note: the first sweep (results/ncars_sweep.json) already ran seed 42
+    at exactly this config -- 30 epochs, batch 64, 10 timesteps -- so that arm
+    is reused rather than recomputed. Only seeds 43 and 44 are launched here.
+    That is 9 runs instead of 21, ~$7 instead of ~$17, for the same conclusions.
+    """
+    # Budget-driven subset. A first attempt at 9 points was preempted after
+    # ~7 GPU-hours, so what remains buys ~6 runs. Priorities:
+    #   * the lambda extension -- nothing is known past lambda=1.0
+    #   * seed repeats at lambda=0.05 only -- that is the disputed dip; the
+    #     lambda=0 and lambda=1.0 results are not in question, so paying for
+    #     their repeats buys less than finding the cliff.
+    extension = [2.0, 5.0, 10.0]
+    disputed = 0.05
+    points = [(42, l) for l in extension]
+    points += [(s, disputed) for s in (43, 44)]
+
+    print(f"launching {len(points)} runs in parallel on {GPU}...")
+    results = list(train_point.starmap([(s, l, epochs) for s, l in points]))
+
+    Path("results").mkdir(exist_ok=True)
+    Path("results/ncars_sweep_v2.json").write_text(json.dumps(results, indent=2))
+
+    # Seed repeats: mean and spread per lambda.
+    print("\n" + "=" * 72)
+    print("SEED REPEATS")
+    print(f"{'lambda':>8} {'accuracy (mean +- range)':>28} {'density':>9} {'energy uJ':>11}")
+    print("=" * 72)
+    prior = {}
+    prior_path = Path("results/ncars_sweep.json")
+    if prior_path.exists():
+        for r in json.loads(prior_path.read_text()):
+            prior[r["sparsity_lambda"]] = {"seed": 42, **r}
+
+    for lam in [disputed]:
+        runs = [r for r in results if r["sparsity_lambda"] == lam]
+        if lam in prior:
+            runs = runs + [prior[lam]]
+        accs = [r["snn"]["accuracy"] * 100 for r in runs if "snn" in r]
+        if not accs:
+            continue
+        mean = sum(accs) / len(accs)
+        spread = (max(accs) - min(accs)) / 2
+        dens = sum(r["snn"]["mean_density"] for r in runs) / len(runs) * 100
+        energy = sum(r["snn"]["energy_uj"] for r in runs) / len(runs)
+        print(f"{lam:>8} {mean:>19.2f}% +- {spread:<5.2f} {dens:>8.1f}% {energy:>11.2f}")
+
+    # Extension: where does it break?
+    print("\n" + "=" * 72)
+    print("LAMBDA EXTENSION (seed 42)")
+    print(f"{'lambda':>8} {'accuracy':>10} {'density':>9} {'energy uJ':>11}")
+    print("=" * 72)
+    for lam in [1.0] + extension:
+        runs = [r for r in results if r["sparsity_lambda"] == lam and r["seed"] == 42]
+        if not runs or "snn" not in runs[0]:
+            continue
+        s = runs[0]["snn"]
+        print(f"{lam:>8} {s['accuracy'] * 100:>9.2f}% {s['mean_density'] * 100:>8.1f}% "
+              f"{s['energy_uj']:>11.2f}")
+
+    print("\nwrote results/ncars_sweep_v2.json")
+
+
+@app.local_entrypoint()
+def sweep_fill(epochs: int = 30) -> None:
+    """The seed repeats deferred from `sweep_seeds` when budget was tight.
+
+    Completes the 3-seed picture at lambda=0 (the baseline) and lambda=1.0 (the
+    headline), so every claim in the README carries a spread rather than a
+    single run. Seed 42 for both already exists in results/ncars_sweep.json.
+    """
+    points = [(s, l) for s in (43, 44) for l in (0.0, 1.0)]
+    print(f"launching {len(points)} fill-in runs on {GPU}...")
+    results = list(train_point.starmap([(s, l, epochs) for s, l in points]))
+
+    Path("results").mkdir(exist_ok=True)
+    Path("results/ncars_sweep_fill.json").write_text(json.dumps(results, indent=2))
+    for r in sorted(results, key=lambda r: (r["sparsity_lambda"], r["seed"])):
+        snn = r.get("snn", {})
+        print(f"  seed {r['seed']} lambda {r['sparsity_lambda']}: "
+              f"{snn.get('accuracy', 0) * 100:.2f}%  "
+              f"density {snn.get('mean_density', 0) * 100:.1f}%  "
+              f"{snn.get('energy_uj', 0):.2f} uJ")
+    print("\nwrote results/ncars_sweep_fill.json")
 
 
 @app.function(volumes=VOLUMES)

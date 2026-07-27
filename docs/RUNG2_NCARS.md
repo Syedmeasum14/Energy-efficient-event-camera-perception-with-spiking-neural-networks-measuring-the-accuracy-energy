@@ -27,10 +27,12 @@ max width and height across 600 random files.
 | Model | Accuracy | Operations / sample | Est. energy / sample | Spike density |
 |---|---:|---:|---:|---:|
 | CNN | **91.37%** | 49.56 M MAC | 227.97 uJ | — |
-| SNN (no penalty) | 88.27% | 120.88 M SynOp | 108.79 uJ | 37.9% |
-| **SNN (lambda = 1.0)** | **88.52%** | 34.87 M SynOp | **31.38 uJ** | 22.0% |
+| SNN (no penalty) | 88.05% +- 0.62 | 114.30 M SynOp | 102.86 uJ | 36.9% |
+| **SNN (lambda = 1.0)** | **89.13% +- 0.88** | 33.67 M SynOp | **30.30 uJ** | 21.2% |
+| SNN (lambda = 10) | 86.21% | 3.18 M SynOp | 2.87 uJ | 5.8% |
 
-**7.3x less energy for 2.9 points of accuracy.**
+**7.5x less energy for 2.24 points of accuracy** at lambda=1.0, rising to
+**79.4x** at lambda=10 for 5.16 points.
 
 ![Accuracy versus estimated energy on N-CARS](figures/ncars-pareto-light.png)
 
@@ -40,31 +42,46 @@ representation, and BNTT in place of BatchNorm.
 
 ## The sparsity sweep
 
-Six values of the firing-rate penalty `lambda`, run in parallel on Modal T4s,
-30 epochs each.
+Nine lambda values across three parallel launches on Modal T4s, 30 epochs each,
+15 runs in total. Spreads are the observed half-range over 3 seeds; with n=3 a
+standard deviation would imply more than the data supports.
 
-| lambda | accuracy | spike density | est. energy | SynOps |
-|---|---:|---:|---:|---:|
-| 0.0 | 88.50% | 36.7% | 100.65 uJ | 111.83 M |
-| 0.01 | 87.29% | 37.4% | 105.63 uJ | 117.36 M |
-| 0.05 | 86.36% | 34.9% | 90.06 uJ | 100.07 M |
-| 0.1 | 88.24% | 33.5% | 82.22 uJ | 91.35 M |
-| 0.5 | 88.44% | 25.6% | 41.90 uJ | 46.55 M |
-| **1.0** | **88.52%** | **22.0%** | **31.38 uJ** | **34.87 M** |
+| lambda | accuracy | seeds | spike density | est. energy | vs CNN |
+|---|---:|---:|---:|---:|---:|
+| 0 | 88.05% +- 0.62 | 3 | 36.9% | 102.86 uJ | 2.2x |
+| 0.01 | 87.29% | 1 | 37.4% | 105.63 uJ | 2.2x |
+| 0.05 | 87.19% +- 1.05 | 3 | 34.9% | 89.89 uJ | 2.5x |
+| 0.1 | 88.24% | 1 | 33.5% | 82.22 uJ | 2.8x |
+| 0.5 | 88.44% | 1 | 25.6% | 41.90 uJ | 5.4x |
+| 1 | 89.13% +- 0.88 | 3 | 21.2% | 30.30 uJ | 7.5x |
+| 2 | 88.67% | 1 | 16.4% | 21.00 uJ | 10.9x |
+| 5 | 87.27% | 1 | 9.1% | 6.72 uJ | 33.9x |
+| 10 | 86.21% | 1 | 5.8% | 2.87 uJ | 79.4x |
 
-![Sparsity penalty against density and energy](figures/ncars-sweep-light.png)
+![Sparsity penalty against density, energy and accuracy](figures/ncars-sweep-light.png)
 
-### The penalty is free, which was not the expectation
+### The penalty does not cost accuracy
 
-The whole Pareto framing assumes sparsity must be **bought** with accuracy.
-On N-CARS it costs nothing: `lambda=1.0` is marginally *more* accurate than
-`lambda=0` (88.52% vs 88.50%) while using **3.2x less energy**.
+lambda=1.0 averages **1.08 points above** lambda=0 while using 3.4x less
+energy. The ranges overlap (88.25-90.01 vs 87.43-88.67), so the supportable
+claim is that sparsity is **free, and possibly beneficial** — not that the
+improvement is established.
 
-The unpenalised network was spiking more than the task required — activity
-carrying no information. Nothing in the plain cross-entropy loss discouraged
-it, so the optimiser had no reason to stop.
+Nothing in a plain cross-entropy loss discourages spiking, so the unpenalised
+network fires more than the task needs. That surplus carries no information.
 
-This is what moved the headline against the CNN from 2.1x to **7.3x**.
+### The lambda=0.05 dip was seed noise
+
+The single-seed sweep showed 86.36% and it looked like a real anomaly. At n=3
+it is 87.19% +- 1.05, overlapping lambda=0. There was nothing to explain — and
+the original figure invited a reader to explain it anyway. That is the argument
+for paying for repeats.
+
+### No cliff up to lambda=10
+
+lambda=0 to lambda=10 is a **36x energy cut for 1.84 accuracy points**, degrading
+gently the whole way. At the far end the network scores 86.21% at 2.87 uJ —
+essentially CarSNN's published 86.94% — at roughly 1/80th of the CNN's energy.
 
 ## Predictions on held-out data
 
@@ -88,7 +105,7 @@ at all.
 |---|---:|---|
 | Our CNN | 91.37% | |
 | HATS (Sironi et al., CVPR 2018) | 90.2% | the dataset's own paper |
-| **Our SNN** | **88.52%** | |
+| **Our SNN** | **89.13%** | mean of 3 seeds |
 | [CarSNN](https://arxiv.org/pdf/2107.00401) (Viale et al., IJCNN 2021) | 86.94% | SNN deployed to Loihi |
 | Gabor-SNN | 78.9% | |
 | HOTS | 62.4% | |
@@ -137,11 +154,14 @@ trains with and without the penalty and asserts firing actually drops.
 
 ## Known gaps
 
-- **Single seed.** The dip at `lambda=0.05` (86.36%) is probably noise —
-  `lambda=0.1` recovers — but that needs repeats to say.
-- **The front is not fully traced.** Density is still 22% at `lambda=1.0` and
-  accuracy never fell, so the point where sparsity finally costs something was
-  never found. Higher `lambda` would show it.
+- **lambda=2, 5 and 10 are single-seed**, so the far end of the front —
+  including the 79x figure — carries no error bars.
+- **The CNN baseline is single-seed**, and it is the denominator of every
+  energy ratio quoted here.
+- **Timesteps were never varied.** The relation is `5.1/(T x r)`; only `r` was
+  ever attacked, with `T=10` throughout. Halving `T` is an untested second
+  lever worth roughly another 2x.
+- **Calibration is unmeasured** — see the 97%-confident error above.
 - Energy is **estimated** under the Horowitz (2014) 45 nm model, not measured
   on hardware. Memory traffic is ignored and often dominates in practice.
 
